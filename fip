@@ -1,0 +1,192 @@
+from xml.sax import parseString
+from bs4 import BeautifulSoup
+import requests
+import re
+import os
+import pandas as pd
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#ERA-
+def get_era(d):
+    url = 'http://pointstreak.com/baseball/team_stats.html?teamid=132636&seasonid=33290&view=pitching'
+    r = requests.get(url)
+    soup = BeautifulSoup(r.text, 'html.parser')
+    table = soup.find('div', {'id': 'pitchingresults'})
+    rows = table.find_all('tr')
+    for items in rows[1:-1]:
+        stats_L = items.text.split('\n')
+        d[stats_L[1]]['ERA'] = float(stats_L[-2])
+    return d
+
+def get_league_era():
+    url = 'http://pointstreak.com/baseball/stats.html?leagueid=193&seasonid=33290&view=teampitching'
+    r = requests.get(url)
+    soup = BeautifulSoup(r.text, 'html.parser')
+    table = soup.find('div', {'id': 'teamtotalspitching'})
+    rows = table.find_all('tr')
+    sum_era = 0
+    count = 0
+    flag = False
+    for items in rows[1:-1]:
+        stats_L = items.text.split('\n')
+        if stats_L[1] == 'Team':
+            flag = True
+        if flag and stats_L[2].isnumeric() and len(stats_L)>9:
+            sum_era+=float(stats_L[-2])
+            count+=1
+    return sum_era/count
+
+def calculate_era_minus(d):
+    output_L = []
+    for keys in d:
+        if keys[:2]!= 'x ':
+            output_L.append(round((100*d[keys]['ERA'])/get_league_era()))
+    return output_L
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#FIP
+def bb_k_ip(d):
+    url = 'http://pointstreak.com/baseball/team_stats.html?teamid=132636&seasonid=33290&view=pitching&pset=0&orderby=era'
+    r = requests.get(url)
+    soup = BeautifulSoup(r.text, 'html.parser')
+    table = soup.find('div', {'id': 'pitchingresults'})
+    rows = table.find_all('tr')
+    for items in rows[1:-1]:
+        stats_L = items.text.split('\n')
+        d[stats_L[1]] = {}
+        d[stats_L[1]]['BB'] = int(stats_L[-9])
+        d[stats_L[1]]['K'] = int(stats_L[-8])
+        ip = stats_L[5]
+        decimal = ip[-2:]
+        if decimal=='.0':
+            d[stats_L[1]]['IP'] = float(ip)
+        else:
+            split_ip = ip.split('.')
+            new_ip = int(split_ip[0])+(float(decimal)*3.3)
+            d[stats_L[1]]['IP'] = new_ip
+
+def hr_hbp(d):
+    url = 'http://pointstreak.com/baseball/team_stats.html?teamid=132636&seasonid=33290&view=pitching&pset=1&orderby=era'
+    r = requests.get(url)
+    soup = BeautifulSoup(r.text, 'html.parser')
+    table = soup.find('div', {'id': 'pitchingresults'})
+    rows = table.find_all('tr')
+    for items in rows[1:-1]:
+        stats_L = items.text.split('\n')
+        d[stats_L[1]]['HR'] = int(stats_L[4])
+        d[stats_L[1]]['HBP'] = int(stats_L[7])
+
+def fip_constant():
+    url = 'http://pointstreak.com/baseball/stats.html?leagueid=193&seasonid=33290&view=teampitching'
+    r = requests.get(url)
+    soup = BeautifulSoup(r.text, 'html.parser')
+    table = soup.find('div', {'id': 'teamtotalspitching'})
+    rows = table.find_all('tr')
+    d = {}
+    for items in rows[1:]:
+        stats_L = items.text.split('\n')
+        if stats_L[1] == 'Totals:':
+            d['lgBB'] = int(stats_L[8])
+            d['lgHBP'] = int(stats_L[10])
+            d['lgK'] = int(stats_L[11])
+            ip = stats_L[4]
+            decimal = ip[-2:]
+            if '.' not in ip:
+                d['lgIP'] = float(ip)
+            else:
+                split_ip = ip.split('.')
+                new_ip = int(split_ip[0])+(float(decimal)*3.3)
+                d['lgIP'] = new_ip
+        if stats_L[1] == 'Total:':
+            d['lgHR'] = int(stats_L[-2])
+    output = get_league_era()-((((13*d['lgHR'])+(d['lgBB']+d['lgHBP']))-(2*d['lgK']))/d['lgIP'])
+    return output
+
+print(fip_constant())
+
+def calculate_fip(d):
+     output_L = []
+     for keys in d:
+         if keys[:2]!= 'x ':
+            output_L.append(round((((d[keys]['HR'])+(3*(d[keys]['BB']+d[keys]['HBP']))-(2*d[keys]['K']))/d[keys]['IP'])+ fip_constant(),2))
+     return output_L
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def get_whip(d):
+    url = 'http://pointstreak.com/baseball/team_stats.html?teamid=132636&seasonid=33290&view=pitching&pset=1&orderby=era'
+    r = requests.get(url)
+    soup = BeautifulSoup(r.text, 'html.parser')
+    table = soup.find('div', {'id': 'pitchingresults'})
+    rows = table.find_all('tr')
+    for items in rows[1:-1]:
+        stats_L = items.text.split('\n')
+        d[stats_L[1]] = {}
+        d[stats_L[1]]['WHIP'] = float(stats_L[-3])
+    output_L = []
+    for keys in d:
+        if keys[:2]!= 'x ':
+            output_L.append(d[keys]['WHIP'])
+    return output_L
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#BB% and K%
+player_ids = {'Shane Barringer': 1540236, 'Joe Cavallaro': 1583148, 'Ryan Clark': 1546308,
+'Justin Goossen-Brown': 1395539, 'Jeff Kinley': 1493438, 'Jordan Kipper': 1498634, 
+'A.J. Kullman': 1579540, 'Tanner Lawson': 1568890, 'Kevin Marnon': 1508206,
+'Kyle Murphy': 1541226, 'James Reeves': 1582853, 'Brian Schlitter': 1597449,
+'Paul Schwendel': 1443906, 'Johnathon Tripp': 1564289}
+def at_bats(player):
+    url = 'http://pointstreak.com/baseball/player.html?playerid={}&seasonid=33290'
+    request_url = url.format(player_ids[player])
+    r = requests.get(request_url)
+    soup = BeautifulSoup(r.text, 'html.parser')
+    table = soup.find('table', {'class': 'psbb_stats_table', 'style': 'background: none;'})
+    rows = table.find_all('tr')
+    flag = False
+    batters_faced = 0
+    walks = 0
+    strikeouts = 0
+    d = {}
+    for items in rows[1:]:
+        stats_L = items.text.split('\n')
+        month = stats_L[1].split()
+        if player_ids[player] == 1508206 and month[0] == 'Jun' and month[1]=='2':
+            batters_faced+=int(stats_L[-7])
+            flag = True
+        if month[0] == 'Sep':
+            flag = True
+        if flag:
+            break
+        batters_faced+=int(stats_L[-7])
+        strikeouts+=int(stats_L[-8])
+        walks+=int(stats_L[-9])
+    return {'Batters Faced': batters_faced, 'Strikeouts': strikeouts, 'Walks': walks}
+
+# d2 = {}
+# strikeout_L =[]
+# walk_L = []
+# for keys in player_ids:
+#     d2[keys] = at_bats(keys)
+#     strikeout_L.append(round((d2[keys]['Strikeouts']/d2[keys]['Batters Faced'])*100, 1))
+#     walk_L.append(round(d2[keys]['Walks']/d2[keys]['Batters Faced']*100, 1))
+# print(strikeout_L)
+# print(walk_L)
+
+
+def main():
+    d = {}
+    bb_k_ip(d)
+    hr_hbp(d)
+    get_era(d)
+    name_L = []
+    for keys in d:
+        if keys[:2]!='x ':
+            name_L.append(keys)
+    zipped = list(zip(name_L, calculate_fip(d), get_whip(d)))
+    sorted_zipped = sorted(zipped, key = lambda x: x[0][:4])
+    # final_L = list(zip(sorted_zipped, strikeout_L, walk_L))
+    df = pd.DataFrame(sorted_zipped, columns = ['Name', 'FIP', 'WHIP'])
+    df.to_excel('advanced_pitching_stats.xlsx')
+    print(df)
+
+main()
+# d = {}
+# print(get_whip(d))
