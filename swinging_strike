@@ -1,0 +1,370 @@
+from turtle import home
+from xml.sax import parseString
+from bs4 import BeautifulSoup
+import requests
+import re
+import os
+import pandas as pd
+
+team_id = {'Chicago Dogs': 132636, 'Sioux Falls Canaries': 6317, 'Cleburne Railroaders': 120887, 'Gary SouthShore RailCats': 11128, 
+'Kane County Cougars': 153175, 'Lake Country DockHounds': 157896, 'Milwaukee Milkmen': 141706,
+'Fargo-Moorhead RedHawks': 11218, 'Kansas City Monarchs': 11129, 'Lincoln Saltdogs': 11130, 
+'Sioux City Explorers': 11131, 'Winnipeg Goldeyes': 11219}
+
+def get_pbp(game_id):
+    try:
+        url = "http://pointstreak.com/baseball/boxscore.html?gameid={}"
+        requests_url = url.format(game_id)
+        r = requests.get(requests_url)
+        soup = BeautifulSoup(r.text, 'html.parser')
+        table = soup.find('div', {'id': "psbb_playbyplay"})
+        innings = table.find_all('table', {"class": "psbb_stats_table"})
+        output_L = []
+        for items in innings:
+            outcome_L = items.text.split('\n')
+            outcome_L = list(filter(None, outcome_L))
+            for i in range(len(outcome_L)):
+                outcome_L[i] = outcome_L[i].strip('\t ')
+            outcome_L = list(filter(None, outcome_L))
+            output_L.append(outcome_L)
+        return output_L
+    except:
+        print("No Game Data for Game {}".format(game_id))
+
+def get_pitcher_list(game_data, team_name):
+    try:
+        team_1 = game_data[0][1]
+        team_2 = game_data[1][1]
+        if team_1 == team_name:
+            #away_team_d = {team_name: {}}
+            away_team_L = []
+            for lists in game_data:
+                smaller_list = lists[:-1]
+                r = '\d+\s{1}(.*)\s{1}subs\s{1}for\s{1}(.*)\s{1}Pitcher'
+                for i in range(len(smaller_list)):
+                    if smaller_list[i] == 'Pitching Substitution':
+                        x = re.match(r, smaller_list[i+1])
+                        if x!= None and smaller_list[1] == team_2:
+                            if x.group(2) not in away_team_L:
+                                away_team_L.append(x.group(2))
+                            if x.group(1) not in away_team_L:
+                                away_team_L.append(x.group(1))
+            return away_team_L
+        else:
+            home_team_L = []
+            for lists in game_data:
+                smaller_list = lists[:-1]
+                r = '\d+\s{1}(.*)\s{1}subs\s{1}for\s{1}(.*)\s{1}Pitcher'
+                for i in range(len(smaller_list)):
+                    if smaller_list[i] == 'Pitching Substitution':
+                        x = re.match(r, smaller_list[i+1])
+                        if x!= None and smaller_list[1] == team_1:
+                            if x.group(2) not in home_team_L:
+                                home_team_L.append(x.group(2))
+                            if x.group(1) not in home_team_L:
+                                home_team_L.append(x.group(1))
+            return home_team_L
+    except:
+        print('No Pitcher List')
+
+def populate_dict(game_data, team_name, pitchers, d):
+    swing_and_miss_outcomes = ['Swinging Strike', '(strike out swinging)', '(dropped 3rd strike:']
+    no_swing_outcomes = ['Ball', 'Called Strike', '(hit by pitch)', '(walk)', '(strike out)']
+    ignore_outcomes = ['(balk)', '(intentional walk)']
+    try:
+        team_1 = game_data[0][1]
+        team_2 = game_data[1][1]
+        if team_1 == team_name:
+            inside_d = {'Pitch Count': 0, 'Total Swings': 0, 'Swing and Miss': 0, 'Batters Faced': 0}
+            count = 0
+            ignore_L = []
+            for i in range(len(game_data)):
+                if game_data[i][1] != team_name:
+                    half_inning_L = game_data[i][:-1]
+                    r = '#(\d+)\s{2}(.*)'
+                    for j in range(len(half_inning_L)):
+                        if half_inning_L[j] == 'Pitching Substitution':
+                            if team_name not in d:
+                                d[team_name] = {pitchers[count]: {'Pitch Count': 0, 'Total Swings': 0, 'Swing and Miss': 0, 'Batters Faced': 0}}
+                                d[team_name][pitchers[count]]['Pitch Count']+=inside_d['Pitch Count']
+                                d[team_name][pitchers[count]]['Total Swings']+=inside_d['Total Swings']
+                                d[team_name][pitchers[count]]['Swing and Miss']+=inside_d['Swing and Miss']
+                                d[team_name][pitchers[count]]['Batters Faced']+=inside_d['Batters Faced']
+                                count+=1
+                                inside_d = {'Pitch Count': 0, 'Total Swings': 0, 'Swing and Miss': 0, 'Batters Faced': 0}
+                            elif pitchers[count] not in d[team_name]:
+                                d[team_name][pitchers[count]] = {'Pitch Count': 0, 'Total Swings': 0, 'Swing and Miss': 0, 'Batters Faced': 0}
+                                d[team_name][pitchers[count]]['Pitch Count']+=inside_d['Pitch Count']
+                                d[team_name][pitchers[count]]['Total Swings']+=inside_d['Total Swings']
+                                d[team_name][pitchers[count]]['Swing and Miss']+=inside_d['Swing and Miss']
+                                d[team_name][pitchers[count]]['Batters Faced']+=inside_d['Batters Faced']
+                                count+=1
+                                inside_d = {'Pitch Count': 0, 'Total Swings': 0, 'Swing and Miss': 0, 'Batters Faced': 0}
+                            else:
+                                d[team_name][pitchers[count]]['Pitch Count']+=inside_d['Pitch Count']
+                                d[team_name][pitchers[count]]['Total Swings']+=inside_d['Total Swings']
+                                d[team_name][pitchers[count]]['Swing and Miss']+=inside_d['Swing and Miss']
+                                d[team_name][pitchers[count]]['Batters Faced']+=inside_d['Batters Faced']
+                                count+=1
+                                inside_d = {'Pitch Count': 0, 'Total Swings': 0, 'Swing and Miss': 0, 'Batters Faced': 0}
+                        x = re.match(r, half_inning_L[j])
+                        if x!=None:
+                            split_L = half_inning_L[j+1].split(',')
+                            inside_d['Batters Faced']+=1
+                            for pitches in split_L:
+                                pitches = pitches.strip()
+                                if (pitches[:1].isnumeric() or pitches[:2].isnumeric()) and x.group(2) not in pitches:
+                                    ignore_L.append(pitches)
+                                if ignore_outcomes[0] in pitches or ignore_outcomes[1] in pitches:
+                                    ignore_L.append(pitches)
+                            for pitches in split_L:
+                                pitches = pitches.strip()
+                                if pitches not in ignore_L:
+                                    if (no_swing_outcomes[0] not in pitches) and (no_swing_outcomes[1] not in pitches) and (no_swing_outcomes[2] not in pitches) and (no_swing_outcomes[3] not in pitches) and (no_swing_outcomes[4] not in pitches) and (swing_and_miss_outcomes[0] not in pitches) and (swing_and_miss_outcomes[1] not in pitches) and (swing_and_miss_outcomes[2] not in pitches):
+                                        inside_d['Pitch Count']+=1
+                                        inside_d['Total Swings']+=1
+                                    elif swing_and_miss_outcomes[0] in pitches or swing_and_miss_outcomes[1] in pitches or swing_and_miss_outcomes[2] in pitches:
+                                        inside_d['Pitch Count']+=1
+                                        inside_d['Total Swings']+=1
+                                        inside_d['Swing and Miss']+=1
+                                    else:
+                                        inside_d['Pitch Count']+=1
+                    if count == len(pitchers)-1 and (i == len(game_data)-1 or i == len(game_data)-2):
+                        if pitchers[-1] not in d[team_name]:
+                            d[team_name][pitchers[count]] = {'Pitch Count': 0, 'Total Swings': 0, 'Swing and Miss': 0, 'Batters Faced': 0}
+                            d[team_name][pitchers[count]]['Pitch Count']+=inside_d['Pitch Count']
+                            d[team_name][pitchers[count]]['Total Swings']+=inside_d['Total Swings']
+                            d[team_name][pitchers[count]]['Swing and Miss']+=inside_d['Swing and Miss']
+                            d[team_name][pitchers[count]]['Batters Faced']+=inside_d['Batters Faced']
+                        else:
+                            d[team_name][pitchers[count]]['Pitch Count']+=inside_d['Pitch Count']
+                            d[team_name][pitchers[count]]['Total Swings']+=inside_d['Total Swings']
+                            d[team_name][pitchers[count]]['Swing and Miss']+=inside_d['Swing and Miss']
+                            d[team_name][pitchers[count]]['Batters Faced']+=inside_d['Batters Faced']
+            return d
+        if team_2 == team_name:
+            inside_d = {'Pitch Count': 0, 'Total Swings': 0, 'Swing and Miss': 0, 'Batters Faced': 0}
+            count = 0
+            ignore_L = []
+            for i in range(len(game_data)):
+                if game_data[i][1] != team_name:
+                    half_inning_L = game_data[i][:-1]
+                    r = '#(\d+)\s{2}(.*)'
+                    for j in range(len(half_inning_L)):
+                        if half_inning_L[j] == 'Pitching Substitution':
+                            if team_name not in d:
+                                d[team_name] = {pitchers[count]: {'Pitch Count': 0, 'Total Swings': 0, 'Swing and Miss': 0, 'Batters Faced': 0}}
+                                d[team_name][pitchers[count]]['Pitch Count']+=inside_d['Pitch Count']
+                                d[team_name][pitchers[count]]['Total Swings']+=inside_d['Total Swings']
+                                d[team_name][pitchers[count]]['Swing and Miss']+=inside_d['Swing and Miss']
+                                d[team_name][pitchers[count]]['Batters Faced']+=inside_d['Batters Faced']
+                                count+=1
+                                inside_d = {'Pitch Count': 0, 'Total Swings': 0, 'Swing and Miss': 0, 'Batters Faced': 0}
+                            elif pitchers[count] not in d[team_name]:
+                                d[team_name][pitchers[count]] = {'Pitch Count': 0, 'Total Swings': 0, 'Swing and Miss': 0, 'Batters Faced': 0}
+                                d[team_name][pitchers[count]]['Pitch Count']+=inside_d['Pitch Count']
+                                d[team_name][pitchers[count]]['Total Swings']+=inside_d['Total Swings']
+                                d[team_name][pitchers[count]]['Swing and Miss']+=inside_d['Swing and Miss']
+                                d[team_name][pitchers[count]]['Batters Faced']+=inside_d['Batters Faced']
+                                count+=1
+                                inside_d = {'Pitch Count': 0, 'Total Swings': 0, 'Swing and Miss': 0, 'Batters Faced': 0}
+                            else:
+                                d[team_name][pitchers[count]]['Pitch Count']+=inside_d['Pitch Count']
+                                d[team_name][pitchers[count]]['Total Swings']+=inside_d['Total Swings']
+                                d[team_name][pitchers[count]]['Swing and Miss']+=inside_d['Swing and Miss']
+                                d[team_name][pitchers[count]]['Batters Faced']+=inside_d['Batters Faced']
+                                count+=1
+                                inside_d = {'Pitch Count': 0, 'Total Swings': 0, 'Swing and Miss': 0, 'Batters Faced': 0}
+                        x = re.match(r, half_inning_L[j])
+                        if x!=None:
+                            split_L = half_inning_L[j+1].split(',')
+                            inside_d['Batters Faced']+=1
+                            for pitches in split_L:
+                                pitches = pitches.strip()
+                                if (pitches[:1].isnumeric() or pitches[:2].isnumeric()) and x.group(2) not in pitches:
+                                    ignore_L.append(pitches)
+                            for pitches in split_L:
+                                pitches = pitches.strip()
+                                if pitches not in ignore_L:
+                                    if (no_swing_outcomes[0] not in pitches) and (no_swing_outcomes[1] not in pitches) and (no_swing_outcomes[2] not in pitches) and (no_swing_outcomes[3] not in pitches) and (no_swing_outcomes[4] not in pitches) and (swing_and_miss_outcomes[0] not in pitches) and (swing_and_miss_outcomes[1] not in pitches) and (swing_and_miss_outcomes[2] not in pitches):
+                                        inside_d['Pitch Count']+=1
+                                        inside_d['Total Swings']+=1
+                                    elif swing_and_miss_outcomes[0] in pitches or swing_and_miss_outcomes[1] in pitches or swing_and_miss_outcomes[2] in pitches:
+                                        inside_d['Pitch Count']+=1
+                                        inside_d['Total Swings']+=1
+                                        inside_d['Swing and Miss']+=1
+                                    else:
+                                        inside_d['Pitch Count']+=1
+                    if count == len(pitchers)-1 and (i == len(game_data)-1 or i == len(game_data)-2):
+                        if pitchers[-1] not in d[team_name]:
+                            d[team_name][pitchers[count]] = {'Pitch Count': 0, 'Total Swings': 0, 'Swing and Miss': 0, 'Batters Faced': 0}
+                            d[team_name][pitchers[count]]['Pitch Count']+=inside_d['Pitch Count']
+                            d[team_name][pitchers[count]]['Total Swings']+=inside_d['Total Swings']
+                            d[team_name][pitchers[count]]['Swing and Miss']+=inside_d['Swing and Miss']
+                            d[team_name][pitchers[count]]['Batters Faced']+=inside_d['Batters Faced']
+                        else:
+                            d[team_name][pitchers[count]]['Pitch Count']+=inside_d['Pitch Count']
+                            d[team_name][pitchers[count]]['Total Swings']+=inside_d['Total Swings']
+                            d[team_name][pitchers[count]]['Swing and Miss']+=inside_d['Swing and Miss']
+                            d[team_name][pitchers[count]]['Batters Faced']+=inside_d['Batters Faced']
+            return d
+    except:
+        print('No Dictionary')
+
+def total_pitches(team, d):
+    for keys in d[team]:
+        print(keys)
+        print(d[team][keys]['Pitch Count'])
+
+def swinging_strike_percentage(team, d):
+    output_d = {}
+    for keys in d[team]:
+        output_d[keys] = round((d[team][keys]['Swing and Miss']/d[team][keys]['Pitch Count'])*100, 2)
+    L = []
+    for keys in output_d:
+        L.append(keys.split())
+    sorted_L = sorted(L, key = lambda x: x[1])
+    for i in range(len(sorted_L)):
+        sorted_L[i] = ' '.join(sorted_L[i])
+    output_d_2 = {}
+    for names in sorted_L:
+        output_d_2[names] = output_d[names]
+    return output_d_2.items()    
+
+
+
+def at_bats(team, d):
+    output_d = {}
+    for keys in d[team]:
+        output_d[keys] = d[team][keys]['Batters Faced']
+    L = []
+    for keys in output_d:
+        L.append(keys.split())
+    sorted_L = sorted(L, key = lambda x: x[1])
+    for i in range(len(sorted_L)):
+        sorted_L[i] = ' '.join(sorted_L[i])
+    output_d_2 = {}
+    for names in sorted_L:
+        output_d_2[names] = output_d[names]
+    return output_d_2.items()
+
+def whiff_rate(team, d):
+    output_d = {}
+    for keys in d[team]:
+        output_d[keys] = round((d[team][keys]['Swing and Miss']/d[team][keys]['Total Swings'])*100, 2)
+    print(d[team][keys]['Swing and Miss'])
+    print(d[team][keys]['Total Swings'])
+    L = []
+    for keys in output_d:
+        L.append(keys.split())
+    sorted_L = sorted(L, key = lambda x: x[1])
+    for i in range(len(sorted_L)):
+        sorted_L[i] = ' '.join(sorted_L[i])
+    output_d_2 = {}
+    for names in sorted_L:
+        output_d_2[names] = output_d[names]
+    return output_d_2.items()
+
+def walks(team):
+    output_d = {}
+    url = 'http://pointstreak.com/baseball/team_stats.html?teamid={}&seasonid=33290&view=pitching'
+    requests_url = url.format(team_id[team])
+    r = requests.get(requests_url)
+    soup = BeautifulSoup(r.text, 'html.parser')
+    table = soup.find('div', {'id': 'pitchingresults'})
+    rows = table.find_all('tr')
+    for items in rows[1:-1]:
+        stats_L = items.text.split('\n')
+        output_d[stats_L[1]] = int(stats_L[-9])
+    return sorted(output_d.items(), key = lambda x: x[0][:3])
+
+def strikeouts(team):
+    output_d = {}
+    url = 'http://pointstreak.com/baseball/team_stats.html?teamid={}&seasonid=33290&view=pitching'
+    requests_url = url.format(team_id[team])
+    r = requests.get(requests_url)
+    soup = BeautifulSoup(r.text, 'html.parser')
+    table = soup.find('div', {'id': 'pitchingresults'})
+    rows = table.find_all('tr')
+    for items in rows[1:-1]:
+        stats_L = items.text.split('\n')
+        output_d[stats_L[1]] = int(stats_L[-8])
+    return sorted(output_d.items(), key = lambda x: x[0][:3])
+
+
+# def whiff_rate(team, d)
+#     output_d = 
+#print(populate_dict(get_pbp(580082), "Kane County Cougars", get_pitcher_list(get_pbp(580082), "Kane County Cougars"), {}))
+
+#print(get_pitcher_list(get_pbp(580082), "Kane County Cougars"))
+
+def main(team):
+    d = {}
+    name_L = []
+    name_L2 = []
+    sw_str = []
+    walks_L = []
+    at_bat_L = []
+    strikeouts_L = []
+    whiff_rate_L = []
+    for i in range(579967, 580560):
+        populate_dict(get_pbp(i), team, get_pitcher_list(get_pbp(i), team), d)
+    print(d)
+    #populate_dict(get_pbp(580077), team, get_pitcher_list(get_pbp(5), team), d)
+    # print(walks(team))
+    # print(swinging_strike_percentage(team, d))
+    print(whiff_rate(team, d))
+    # print(at_bats(team, d))
+    # print(strikeouts(team))
+    for items in walks(team):
+        if items[0][:2] != 'x ':
+            name_L.append(items[0].split(',')[0])
+            walks_L.append(items[1])
+    for items in swinging_strike_percentage(team, d):
+        if items[0].split()[1] in name_L:
+            name_L2.append(items[0])
+            sw_str.append(items[1])
+    for items in at_bats(team, d):
+        if items[0].split()[1] in name_L:
+            at_bat_L.append(items[1])
+    for items in strikeouts(team):
+        if items[0].split(',')[0] in name_L:
+            strikeouts_L.append(items[1])
+        pass
+    for items in whiff_rate(team, d):
+        if items[0].split()[1] in name_L:
+            whiff_rate_L.append(items[1])
+    walk_rate_L = list(zip(walks_L, at_bat_L))
+    strikeout_rate_L = list(zip(strikeouts_L, at_bat_L))
+    output_walk_rate = []
+    output_strikeout_rate = []
+    # for items in walk_rate_L:
+    #     output_walk_rate.append(round(items[0]/items[1]*100, 2))
+    # for items in strikeout_rate_L:
+    #     output_strikeout_rate.append(round(items[0]/items[1]*100, 2))
+    print(name_L2)
+    print(len(name_L2))
+    print(sw_str)
+    print(len(sw_str))
+    print(whiff_rate_L)
+    print(len(whiff_rate_L))
+    # print(output_walk_rate)
+    # print(len(output_walk_rate))
+    # print(output_strikeout_rate)
+    # print(len(output_strikeout_rate))
+    swstr_data = {'Name': name_L2, 'SwStr%': sw_str, 'Whiff%': whiff_rate_L}
+    swstr_df = pd.DataFrame(swstr_data)
+    swstr_df.to_excel('{}_Swinging_Strike.xlsx'.format(team))
+    print(swstr_df)
+
+    # for i in range(579967, 580122):
+    #     populate_dict(get_pbp(i), team, get_pitcher_list(get_pbp(i), team), d)
+    # print(d)
+    # print(at_bats(team, d))
+    # print(swinging_strike_percentage(team, d))
+    # swstr_data = {'Name': swinging_strike_percentage(team, d).keys(), 'SwStr%': swinging_strike_percentage(team, d).values(), 'Whiff%': whiff_rate(team, d).values()}
+    # swstr_df = pd.DataFrame(swstr_data)
+    # swstr_df.to_excel('{}_Swinging_Strike.xlsx'.format(team))
+    # print(swstr_df)
+main("Chicago Dogs")
+d = {}
